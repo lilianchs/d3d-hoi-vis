@@ -64,17 +64,20 @@ def initialize_render(device, focal_x, focal_y, img_square_size, img_small_size)
     focal_y_small = int(focal_y/shrink_ratio)
     img_small_center = int(img_small_size/2)
 
+
     camera_sfm = PerspectiveCameras(
                 focal_length=((focal_x, focal_y),),
                 principal_point=((img_square_center, img_square_center),),
                 image_size = ((img_square_size, img_square_size),),
-                device=device)
+                device=device,
+                in_ndc=False,)
 
     camera_sfm_small = PerspectiveCameras(
                 focal_length=((focal_x_small, focal_y_small),),
                 principal_point=((img_small_center, img_small_center),),
                 image_size = ((img_small_size, img_small_size),),
-                device=device)
+                device=device,
+                in_ndc=False,)
 
     # To blend the 100 faces we set a few parameters which control the opacity and the sharpness of
     # edges. Refer to blending.py for more details.

@@ -14,11 +14,11 @@ import glob
 import json
 from pathlib import Path
 import argparse
-import re 
-import matplotlib.pyplot as plt 
+import re
+import matplotlib.pyplot as plt
 
 
-global model, index, alpha 
+global model, index, alpha
 index = 0
 alpha = 0.5
 
@@ -45,7 +45,7 @@ def find_files(folder, extension):
     return sorted([Path(os.path.join(folder, f)) for f in os.listdir(folder) if f.endswith(extension)])
 
 
-def read_data():
+def read_data(args):
     """
     Load all annotated data for visualization
     """
@@ -57,11 +57,11 @@ def read_data():
         if isfloat(line) or isint(line):
             gt_partmotion.append(float(line))
     gt_partmotion = np.asarray(gt_partmotion)
-           
+
     with open(os.path.join(args.data_folder, '3d_info.txt')) as myfile:
         gt_data = [next(myfile).strip('\n') for x in range(14)]
-    
-    # GT global object rotation 
+
+    # GT global object rotation
     gt_pitch = float(re.findall(r"[-+]?\d*\.\d+|\d+", gt_data[3])[0])
     gt_yaw =  float(re.findall(r"[-+]?\d*\.\d+|\d+", gt_data[4])[0])
     gt_roll = float(re.findall(r"[-+]?\d*\.\d+|\d+", gt_data[5])[0])
@@ -96,14 +96,14 @@ def read_data():
             'part': gt_part,
             'focal': gt_focalX}
 
-    return data 
+    return data
 
 
 def create_model(gt_data):
     """
     create initial models
     """
-    global model, index, alpha 
+    global model, index, alpha
 
     x_offset = gt_data['x_offset']
     y_offset = gt_data['y_offset']
@@ -148,7 +148,7 @@ def create_model(gt_data):
 
 
 def display_img():
-    global model, index, alpha 
+    global model, index, alpha
 
     frames = find_files(os.path.join(args.data_folder, 'frames'), '.jpg')
     image_bg = np.array(Image.open(frames[index]))/255.0
@@ -159,35 +159,46 @@ def display_img():
 
     with torch.no_grad():
         image = model(index)
-    rgb_mask = image_bg.astype(np.float32) #cv2.addWeighted(objmask.astype(np.float32), 0.5, image_bg.astype(np.float32), 0.5, 0.0)
-    
-    frame_img = np.zeros((img_square, img_square,3))
+
+    white_threshold = 0.95
+    is_background = (image[:,:,0] > white_threshold) & \
+                    (image[:,:,1] > white_threshold) & \
+                    (image[:,:,2] > white_threshold)
+
+    # Create object mask (inverse of background)
+    object_mask = ~is_background
+    object_mask = object_mask[:, :, np.newaxis]
+
+    # Prepare background frame (pad to square)
+    frame_img = np.ones((img_square, img_square, 3))
     start = int((max(img_h, img_w) - min(img_h, img_w))/2) - 1
     end = start + min(img_h, img_w)
     if img_h > img_w:
-        frame_img[:, start:end,  :] = rgb_mask
+        frame_img[:, start:end, :] = image_bg
     else:
-        frame_img[start:end, :, :] = rgb_mask
-    rgb_mask = frame_img
-    alpha = min(1.0, max(0.0,alpha))
-    img_blend = cv2.addWeighted(image.astype(np.float32), alpha, rgb_mask.astype(np.float32), 1-alpha, 0.0)
+        frame_img[start:end, :, :] = image_bg
+
+    # Composite: show original frame, but overlay green object
+    img_blend = frame_img * (~object_mask) + (
+                0.8 * image + (1 - 0.8) * frame_img
+            ) * object_mask
+
     img_blend = cv2.resize(img_blend, dsize=(800, 800), interpolation=cv2.INTER_NEAREST)
     return img_blend
-
-
-
-
-
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--data_folder", type=str, help="annotation data folder")
 parser.add_argument("--cad_folder", type=str, help="cad data folder")
 args = parser.parse_args()
 
-gt_data = read_data()
+gt_data = read_data(args)
 num_frames = create_model(gt_data)
 
 for index in range(num_frames):
     img_blend = display_img()
     plt.imshow(img_blend)
-    plt.show()
+    plt.savefig(f'/ccn2/u/lilianch/data/iclr/d3d_ex/visualize_data/laptop/b017_{index}')
+
+# python vis.py --data_folder /data2/lilianch/D3D-HOI/d3dhoi_video_data/washingmachine/b007-0017/ --cad_folder /data2/lilianch/SAPIEN/process/WashingMachine
+# python vis.py --data_folder /data2/lilianch/D3D-HOI/d3dhoi_video_data/laptop/b003-0017/ --cad_folder /data2/lilianch/SAPIEN/process/Laptop
+# python vis.py --data_folder /data2/lilianch/D3D-HOI/d3dhoi_video_data/storage_prismatic/b108-0103 --cad_folder /data2/lilianch/SAPIEN/process/StorageFurniture

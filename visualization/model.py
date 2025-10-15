@@ -37,12 +37,14 @@ class JOHMRLite(nn.Module):
         self.rot_type = rot_type
         self.x_offset = x_offset
         self.y_offset = y_offset
-        self.z_offset = z_offset 
-        self.part_motion = part_motion 
+        self.z_offset = z_offset
+        self.part_motion = part_motion
 
         # camera is almost at the center (distance can't be zero for diff render)
-        self.R, self.T = look_at_view_transform(0.1, 0.0, 0.0,device=self.device)
+        self.R, self.T = look_at_view_transform(0.1, 0.0, 0.0, device=self.device)
         self.T[0,2] = 0.0  # manually set to zero
+
+        # self.R, self.T = look_at_view_transform(200.0, 0.0, 0.0, device=self.device)
 
         x_diff = torch.max(obj_verts[:,0]) - torch.min(obj_verts[:,0])
         self.x_ratio = float(obj_size[0]) / x_diff
@@ -80,21 +82,33 @@ class JOHMRLite(nn.Module):
 
         partmotion = self.part_motion[index]
         obj_verts = self.obj_verts.clone()
-        
+
+        print(f"\n__Frame {index}__")
+
         # part motion
         if self.rot_type[0] == 'prismatic':
-            part_state = torch.tensor(partmotion).to(self.device)
+            part_state = torch.tensor(partmotion).to(self.device) * -1
             obj_verts_t1 = obj_verts[self.vertexStart:self.vertexEnd, :] - self.rot_o
             obj_verts_t2 = obj_verts_t1 + self.axis * part_state  #/float(annotation['obj_dim'][2]) * z_ratio
             obj_verts[self.vertexStart:self.vertexEnd, :] = obj_verts_t2 + self.rot_o
+            print(f"Prismatic motion: moved by {part_state.item()}")
+
 
         else:
-            part_state = torch.tensor(partmotion*0.0174533)
+            part_state = torch.tensor(-1*partmotion*0.0174533)
+            print(f"Revolute motion: {partmotion} degrees = {part_state.item()} radians")
+            verts_before = obj_verts[self.vertexStart:self.vertexEnd, :].clone()
+
             part_rot_mat = rotation_matrix(self.axis, part_state)
             obj_verts_t1 = obj_verts[self.vertexStart:self.vertexEnd, :] - self.rot_o
             obj_verts_t2 = torch.mm(part_rot_mat.to(self.device), obj_verts_t1.permute(1,0)).permute(1,0)
             obj_verts[self.vertexStart:self.vertexEnd, :] = obj_verts_t2 + self.rot_o
-              
+
+            verts_after = obj_verts[self.vertexStart:self.vertexEnd, :]
+            movement = (verts_after - verts_before).abs().max()
+            print(f"Max vertex movement: {movement.item():.4f}")
+
+
         # step 3: object orientation
         obj_verts = torch.mm(self.objR, obj_verts.permute(1,0)).permute(1,0)
 
@@ -104,14 +118,15 @@ class JOHMRLite(nn.Module):
         obj_verts[:, 2] += 100.0*self.z_offset
 
         obj_verts[:,1:] *= -1
-        # create object mesh for diff render and visualization
+
         tex = torch.ones_like(obj_verts).unsqueeze(0)
         tex[:, :, 0] = 0
         tex[:, :, 1] = 1
         tex[:, :, 2] = 0
         textures = TexturesVertex(verts_features=tex).to(self.device)
         self.obj_mesh = Meshes(verts=[obj_verts],faces=[self.obj_faces],textures=textures)
+
         vis_image = self.vis_render(meshes_world=self.obj_mesh, R=self.R, T=self.T)
-        silhouette = vis_image[0,:,:,:3]  
+        silhouette = vis_image[0,:,:,:3]
 
         return silhouette.detach().cpu().numpy()
